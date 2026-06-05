@@ -3,41 +3,45 @@ from google import genai
 from google.genai import types
 import requests
 
-# 1. 페이지 및 스타일 설정
+# 1. 페이지 및 스타일 설정 (넓은 화면 배치)
 st.set_page_config(page_title="단어 카테고리 & 인기 영상 추출기", layout="wide")
 
-st.title("🎯 핵심 카테고리 및 유튜브 인기 영상 추출기")
-st.caption("단어를 분석하여 카테고리를 분류하고, 유튜브에서 조회수 10만/50만 이상의 롱폼 및 쇼츠 영상을 추출합니다.")
+st.title("🎯 핵심 카테고리 및 유튜브 25개 영상 추출기")
+st.caption("단어를 분석하여 카테고리를 분류하고, 유튜브에서 조회수 10만 이상의 롱폼 및 쇼츠 영상을 최대 25개씩 정밀 추출합니다.")
 st.divider()
 
 # 2. 내부 Secrets 시스템에서 API 키 자동 로드
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
 youtube_api_key = st.secrets.get("YOUTUBE_API_KEY", None)
 
-# 유튜브 API 호출 함수 (조회수 정렬 및 영상 길이 기반 롱폼/쇼츠 분류)
-def get_youtube_videos(query, api_key):
+# 유튜브 API 호출 함수 (상위 25개 고속 수집 버전)
+def get_youtube_videos_25(query, api_key, target_count=25):
     if not api_key:
         return None
     
-    # 1단계: 검색어 기준 대중성/조회수 순으로 영상 25개 검색
+    long_videos = []
+    shorts_videos = []
+    
     search_url = "https://www.googleapis.com/youtube/v3/search"
     search_params = {
         "part": "snippet",
         "q": query,
         "type": "video",
         "order": "viewCount",
-        "maxResults": 25,
+        "maxResults": 50,  # 넉넉하게 50개를 긁어와 롱폼/쇼츠 각각 25개씩 분류 및 필터링
         "key": api_key
     }
-    
+        
     try:
         search_response = requests.get(search_url, params=search_params).json()
-        video_ids = [item["id"]["videoId"] for item in search_response.get("items", [])]
+        items = search_response.get("items", [])
         
-        if not video_ids:
+        if not items:
             return [], []
             
-        # 2단계: 검색된 영상들의 상세 정보(조회수, 영상 길이) 가져오기
+        video_ids = [item["id"]["videoId"] for item in items]
+        
+        # 상세 정보(조회수, 재생시간) 가져오기
         video_url = "https://www.googleapis.com/youtube/v3/videos"
         video_params = {
             "part": "snippet,statistics,contentDetails",
@@ -46,41 +50,47 @@ def get_youtube_videos(query, api_key):
         }
         video_response = requests.get(video_url, params=video_params).json()
         
-        long_videos = []
-        shorts_videos = []
-        
         for item in video_response.get("items", []):
             stats = item.get("statistics", {})
             view_count = int(stats.get("viewCount", 0))
             
-            # 기준: 조회수 10만 이상만 필터링 (원하는 대로 조정 가능)
+            # 기준: 조회수 10만 이상 필터링
             if view_count >= 100000:
                 title = item["snippet"]["title"]
                 video_id = item["id"]
                 url = f"https://www.youtube.com/watch?v={video_id}"
-                duration = item["contentDetails"]["duration"] # ISO 8601 포맷 (예: PT45S, PT15M)
+                duration = item["contentDetails"]["duration"]
                 
+                # 조회수 단위 가독성 처리
+                if view_count >= 100000000:
+                    view_str = f"{view_count / 100000000:.1f}억회"
+                else:
+                    view_str = f"{view_count // 10000}만회"
+                    
                 video_data = {
                     "title": title,
-                    "view_count": f"{view_count // 10000}만회",
+                    "view_count": view_str,
                     "url": url
                 }
                 
-                # 유튜브 API 기준 영상 길이 분석 (M이 없고 S만 있거나, 1분 미만인 경우 쇼츠로 판단)
+                # 롱폼 / 쇼츠 판정 (1분 미만 여부 체크)
                 if "M" not in duration and "H" not in duration:
-                    shorts_videos.append(video_data)
+                    if len(shorts_videos) < target_count:
+                        shorts_videos.append(video_data)
                 elif "PT1M" in duration and duration.endswith("S") and int(duration.split("M")[1].replace("S","")) == 0:
-                    shorts_videos.append(video_data) # 딱 1분
-                    # 일반적으로 대략적인 문자열 패턴 매칭 적용
-                elif "PT0M" in duration or ("M" not in duration):
-                    shorts_videos.append(video_data)
+                    if len(shorts_videos) < target_count:
+                        shorts_videos.append(video_data)
+                elif "PT0M" in duration:
+                    if len(shorts_videos) < target_count:
+                        shorts_videos.append(video_data)
                 else:
-                    long_videos.append(video_data)
-                    
-        return long_videos, shorts_videos
+                    if len(long_videos) < target_count:
+                        long_videos.append(video_data)
+                        
     except Exception as e:
-        st.error(f"유튜브 데이터 로드 실패: {e}")
-        return [], []
+        st.error(f"유튜브 수집 중 에러 발생: {e}")
+        
+    return long_videos, shorts_videos
 
 # 3. 메인 입력창
 st.subheader("📝 분석할 단어 입력")
@@ -96,8 +106,8 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
     elif user_input.strip() == "":
         st.warning("📝 분석할 단어를 입력해 주세요.")
     else:
-        # 화면을 좌우 2분할하여 결과 배치
-        col_analysis, col_youtube = st.columns([1, 1])
+        # 화면 좌우 2분할 설정
+        col_analysis, col_youtube = st.columns([1, 1.5])
         
         # [왼쪽 열] Gemini 카테고리 분석
         with col_analysis:
@@ -138,31 +148,31 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                 except Exception as e:
                     st.error(f"Gemini 에러: {e}")
         
-        # [오른쪽 열] 유튜브 실시간 인기 영상 매칭
+        # [오른쪽 열] 유튜브 대량 분석 결과 출력
         with col_youtube:
             if not youtube_api_key:
                 st.info("📢 유튜브 API Key를 등록하면 실시간 인기 영상 조회가 활성화됩니다.")
             else:
-                with st.spinner("유튜브에서 조회수 10만 이상 영상 찾는 중..."):
-                    long_videos, shorts_videos = get_youtube_videos(user_input, youtube_api_key)
+                with st.spinner("유튜브에서 인기 영상을 수집하는 중..."):
+                    long_videos, shorts_videos = get_youtube_videos_25(user_input, youtube_api_key, target_count=25)
                     
-                    st.success("📺 유튜브 인기 영상 매칭 완료!")
+                    st.success(f"📺 수집 완료! (롱폼: {len(long_videos)}개 / 쇼츠: {len(shorts_videos)}개)")
                     
-                    # 탭 분할 (롱폼 / 쇼츠)
-                    tab1, tab2 = st.tabs(["🎥 롱폼 영상 (조회수 10만↑)", "📱 쇼츠 영상 (조회수 10만↑)"])
+                    # 탭 분할
+                    tab1, tab2 = st.tabs([f"🎥 롱폼 리스트 ({len(long_videos)}개)", f"📱 쇼츠 리스트 ({len(shorts_videos)}개)"])
                     
                     with tab1:
                         if long_videos:
-                            for vid in long_videos[:5]: # 상위 5개 출력
-                                st.markdown(f"**[{vid['title']}]({vid['url']})**")
-                                st.caption(f"🔥 조회수: {vid['view_count']}")
+                            for i, vid in enumerate(long_videos, 1):
+                                with st.expander(f"{i}. {vid['title']} ({vid['view_count']})"):
+                                    st.markdown(f"🔗 [유튜브에서 영상 보기]({vid['url']})")
                         else:
-                            st.write("조건에 맞는 대형 롱폼 영상이 없습니다.")
+                            st.write("조건에 맞는 대형 롱폼 영상이 검색되지 않았습니다.")
                             
                     with tab2:
                         if shorts_videos:
-                            for vid in shorts_videos[:5]: # 상위 5개 출력
-                                st.markdown(f"**[{vid['title']}]({vid['url']})**")
-                                st.caption(f"🔥 조회수: {vid['view_count']}")
+                            for i, vid in enumerate(shorts_videos, 1):
+                                with st.expander(f"{i}. {vid['title']} ({vid['view_count']})"):
+                                    st.markdown(f"🔗 [유튜브에서 쇼츠 보기]({vid['url']})")
                         else:
-                            st.write("조건에 맞는 대형 쇼츠 영상이 없습니다.")
+                            st.write("조건에 맞는 대형 쇼츠 영상이 검색되지 않았습니다.")
