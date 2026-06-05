@@ -5,7 +5,7 @@ from google.genai import types
 # 1. 페이지 및 스타일 설정
 st.set_page_config(page_title="텍스트 카테고리 & 키워드 추출기", layout="centered")
 
-st.title("🎯 핵심 카테고리 및 키워드 추출기 (Gemini 버전)")
+st.title("🎯 핵심 카테고리 및 키워드 추출기")
 st.caption("텍스트를 분석하여 정해진 규칙에 따라 대분류, 소분류, 키워드를 추출합니다.")
 st.hr()
 
@@ -34,7 +34,7 @@ if st.button("🚀 분석 시작"):
     else:
         with st.spinner("Gemini가 텍스트의 맥락을 분석하고 규칙을 적용하는 중..."):
             try:
-                # 2026년 기준 공식 최신 google-genai 클라이언트 초기화
+                # 구글 최신 표준 genai 클라이언트 초기화
                 client = genai.Client(api_key=gemini_api_key)
                 
                 # 시스템 지시사항(프롬프트) 설정
@@ -79,6 +79,24 @@ if st.button("🚀 분석 시작"):
                 - 키워드: 키워드1, 키워드2, 키워드3
                 """
 
-                # Gemini API 호출 (비용이 저렴하고 빠른 gemini-2.5-flash 모델 사용)
+                # 에러가 발생했던 모델명 및 따옴표 구간을 안전하게 한 줄로 정비
                 response = client.models.generate_content(
-                    model='gemini-2.5
+                    model='gemini-2.5-flash',
+                    contents=f"다음 텍스트를 규칙에 맞게 추출해줘:\n\n{user_input}",
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.1
+                    )
+                )
+                
+                result_text = response.text
+                
+                # 결과 화면 출력
+                st.success("🎯 분석 완료!")
+                st.subheader("📊 추출 결과")
+                
+                # 텍스트 박스 형태로 깔끔하게 렌더링
+                st.code(result_text, language="text")
+
+            except Exception as e:
+                st.error(f"❌ 오류가 발생했습니다: {e}")
