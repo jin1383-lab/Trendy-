@@ -6,15 +6,15 @@ import requests
 # 1. 페이지 및 스타일 설정 (넓은 화면 배치)
 st.set_page_config(page_title="단어 카테고리 & 인기 영상 추출기", layout="wide")
 
-st.title("🎯 핵심 카테고리 및 유튜브 25개 영상 추출기")
-st.caption("단어를 분석하여 카테고리를 분류하고, 유튜브에서 조회수 10만 이상의 롱폼 및 쇼츠 영상을 최대 25개씩 정밀 추출합니다.")
+st.title("🎯 핵심 카테고리, 해시태그 및 유튜브 영상 추출기")
+st.caption("단어를 분석하여 카테고리·키워드·해시태그를 추출하고, 유튜브에서 조회수 10만 이상의 인기 영상을 함께 제공합니다.")
 st.divider()
 
 # 2. 내부 Secrets 시스템에서 API 키 자동 로드
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
 youtube_api_key = st.secrets.get("YOUTUBE_API_KEY", None)
 
-# 유튜브 API 호출 함수 (상위 25개 고속 수집 버전)
+# 유튜브 API 호출 함수 (상위 25개 고속 수집)
 def get_youtube_videos_25(query, api_key, target_count=25):
     if not api_key:
         return None
@@ -28,7 +28,7 @@ def get_youtube_videos_25(query, api_key, target_count=25):
         "q": query,
         "type": "video",
         "order": "viewCount",
-        "maxResults": 50,  # 넉넉하게 50개를 긁어와 롱폼/쇼츠 각각 25개씩 분류 및 필터링
+        "maxResults": 50, 
         "key": api_key
     }
         
@@ -109,14 +109,15 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
         # 화면 좌우 2분할 설정
         col_analysis, col_youtube = st.columns([1, 1.5])
         
-        # [왼쪽 열] Gemini 카테고리 분석
+        # [왼쪽 열] Gemini 카테고리 + 키워드 + 해시태그 분석
         with col_analysis:
-            with st.spinner("Gemini가 단어를 분석하는 중..."):
+            with st.spinner("Gemini가 단어와 해시태그를 분석하는 중..."):
                 try:
                     client = genai.Client(api_key=gemini_api_key)
                     
+                    # 프롬프트에 해시태그 추출 규칙 추가
                     system_instruction = """
-                    당신은 입력된 단어의 핵심 내용을 정확히 파악하여 카테고리와 핵심 키워드를 추출하는 전문가입니다.
+                    당신은 입력된 단어의 핵심 내용을 정확히 파악하여 카테고리, 핵심 키워드, SNS용 연관 해시태그를 추출하는 전문가입니다.
                     반드시 다음 규칙을 엄격하게 준수하여 결과를 출력해야 합니다. 불필요한 서론이나 설명은 절대 제외하세요.
 
                     [카테고리 선정 우선순위 (대분류 후보)]
@@ -126,13 +127,15 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                     1. 대분류는 우선순위 리스트 중 1개만 선택.
                     2. 소분류는 세부 주제 카테고리 2~3개 제시.
                     3. 키워드는 중요도 순으로 나열하며 최대 10개 추출.
-                    4. 중복 표현 제거 및 불필요한 설명 금지.
-                    5. 응답은 반드시 아래 형식을 정확히 따른다.
+                    4. 해시태그는 Instagram, YouTube Shorts 등에서 사용하기 좋은 트렌디한 연관 키워드를 단어 앞에 '#'를 붙여 최대 10개까지 추출한다. (예: #테크 #AI)
+                    5. 중복 표현 제거 및 불필요한 설명 금지.
+                    6. 응답은 반드시 아래 형식을 정확히 따른다.
 
                     [출력 형식]
                     - 대분류: 상위 카테고리
                     - 소분류: 카테고리1, 카테고리2, 카테고리3
                     - 키워드: 키워드1, 키워드2, 키워드3
+                    - 해시태그: #해시태그1 #해시태그2 #해시태그3
                     """
 
                     response = client.models.generate_content(
@@ -143,7 +146,7 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                             temperature=0.1
                         )
                     )
-                    st.success("🎯 카테고리 분석 완료!")
+                    st.success("🎯 분석 완료!")
                     st.code(response.text, language="text")
                 except Exception as e:
                     st.error(f"Gemini 에러: {e}")
