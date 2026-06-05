@@ -3,25 +3,23 @@ from google import genai
 from google.genai import types
 
 # 1. 페이지 및 스타일 설정
-st.set_page_config(page_title="텍스트 카테고리 & 키워드 추출기", layout="centered")
+st.set_page_config(page_title="단어 카테고리 & 키워드 추출기", layout="centered")
 
 st.title("🎯 핵심 카테고리 및 키워드 추출기")
-st.caption("텍스트를 분석하여 정해진 규칙에 따라 대분류, 소분류, 키워드를 추출합니다.")
+st.caption("단어를 분석하여 정해진 규칙에 따라 대분류, 소분류, 키워드를 추출합니다.")
 st.divider()
 
 # 2. 내부 Secrets 시스템에서 Gemini API 키 자동 로드
-# secrets 설정이 누락되었을 때를 대비한 예외 처리
 if "GEMINI_API_KEY" in st.secrets:
     gemini_api_key = st.secrets["GEMINI_API_KEY"]
 else:
     gemini_api_key = None
 
-# 3. 메인 입력창
-st.subheader("📝 분석할 텍스트 입력")
-user_input = st.text_area(
-    "여기에 분석하고 싶은 본문을 입력하세요.",
-    height=250,
-    placeholder="내용을 입력하면 규칙에 맞춰 정확하게 분류됩니다..."
+# 3. 메인 입력창 (한 줄 입력창 st.text_input 으로 변경)
+st.subheader("📝 분석할 단어 입력")
+user_input = st.text_input(
+    "분석할 단어를 입력하세요.",
+    placeholder="예시: 챗GPT, 자율주행, 비트코인, 오마카세 등..."
 )
 
 # 4. 분석 로직 트리거
@@ -29,16 +27,16 @@ if st.button("🚀 분석 시작"):
     if not gemini_api_key:
         st.error("🔑 API Key를 찾을 수 없습니다. Streamlit 세팅(Secrets)이나 .streamlit/secrets.toml 파일에 'GEMINI_API_KEY'를 설정해 주세요.")
     elif user_input.strip() == "":
-        st.warning("📝 분석할 텍스트를 입력해 주세요.")
+        st.warning("📝 분석할 단어를 입력해 주세요.")
     else:
-        with st.spinner("Gemini가 텍스트의 맥락을 분석하고 규칙을 적용하는 중..."):
+        with st.spinner("Gemini가 단어의 맥락을 분석하고 규칙을 적용하는 중..."):
             try:
-                # 시스템 내부에서 가져온 키로 클라이언트 초기화
+                # 구글 최신 표준 genai 클라이언트 초기화
                 client = genai.Client(api_key=gemini_api_key)
                 
                 # 시스템 지시사항(프롬프트) 설정
                 system_instruction = """
-                당신은 텍스트의 핵심 내용을 정확히 파악하여 카테고리와 핵심 키워드를 추출하는 전문가입니다.
+                당신은 입력된 단어의 핵심 내용을 정확히 파악하여 카테고리와 핵심 키워드를 추출하는 전문가입니다.
                 반드시 다음 규칙을 엄격하게 준수하여 결과를 출력해야 합니다. 불필요한 서론이나 설명은 절대 제외하세요.
 
                 [카테고리 선정 우선순위 (대분류 후보)]
@@ -81,7 +79,7 @@ if st.button("🚀 분석 시작"):
                 # Gemini API 호출
                 response = client.models.generate_content(
                     model='gemini-2.5-flash',
-                    contents=f"다음 텍스트를 규칙에 맞게 추출해줘:\n\n{user_input}",
+                    contents=f"다음 단어를 규칙에 맞게 추출해줘:\n\n{user_input}",
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
                         temperature=0.1
