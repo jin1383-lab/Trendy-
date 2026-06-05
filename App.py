@@ -7,7 +7,7 @@ st.set_page_config(page_title="텍스트 카테고리 & 키워드 추출기", la
 
 st.title("🎯 핵심 카테고리 및 키워드 추출기")
 st.caption("텍스트를 분석하여 정해진 규칙에 따라 대분류, 소분류, 키워드를 추출합니다.")
-st.hr()
+st.divider()  # <- 에러가 나던 st.hr()을 올바른 공식 함수인 st.divider()로 수정했습니다.
 
 # 2. API 키 입력 (사이드바)
 st.sidebar.header("🔑 API 설정")
@@ -79,7 +79,7 @@ if st.button("🚀 분석 시작"):
                 - 키워드: 키워드1, 키워드2, 키워드3
                 """
 
-                # 에러가 발생했던 모델명 및 따옴표 구간을 안전하게 한 줄로 정비
+                # Gemini API 호출
                 response = client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=f"다음 텍스트를 규칙에 맞게 추출해줘:\n\n{user_input}",
