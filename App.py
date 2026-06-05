@@ -1,16 +1,21 @@
 import streamlit as st
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 # 1. 페이지 및 스타일 설정
 st.set_page_config(page_title="텍스트 카테고리 & 키워드 추출기", layout="centered")
 
-st.title("🎯 핵심 카테고리 및 키워드 추출기")
+st.title("🎯 핵심 카테고리 및 키워드 추출기 (Gemini 버전)")
 st.caption("텍스트를 분석하여 정해진 규칙에 따라 대분류, 소분류, 키워드를 추출합니다.")
 st.hr()
 
 # 2. API 키 입력 (사이드바)
 st.sidebar.header("🔑 API 설정")
-openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password", help="OpenAI에서 발급받은 API 키를 입력하세요.")
+gemini_api_key = st.sidebar.text_input(
+    "Gemini API Key", 
+    type="password", 
+    help="Google AI Studio에서 발급받은 API 키를 입력하세요."
+)
 
 # 3. 메인 입력창
 st.subheader("📝 분석할 텍스트 입력")
@@ -22,18 +27,18 @@ user_input = st.text_area(
 
 # 4. 분석 로직 트리거
 if st.button("🚀 분석 시작"):
-    if not openai_api_key:
-        st.error("🔑 왼편 사이드바에 OpenAI API Key를 입력해 주세요.")
+    if not gemini_api_key:
+        st.error("🔑 왼편 사이드바에 Gemini API Key를 입력해 주세요.")
     elif user_input.strip() == "":
         st.warning("📝 분석할 텍스트를 입력해 주세요.")
     else:
-        with st.spinner("텍스트의 맥락을 분석하고 규칙을 적용하는 중..."):
+        with st.spinner("Gemini가 텍스트의 맥락을 분석하고 규칙을 적용하는 중..."):
             try:
-                # OpenAI 클라이언트 초기화
-                client = OpenAI(api_key=openai_api_key)
+                # 2026년 기준 공식 최신 google-genai 클라이언트 초기화
+                client = genai.Client(api_key=gemini_api_key)
                 
-                # 프롬프트에 규칙과 제약 조건 주입
-                system_prompt = """
+                # 시스템 지시사항(프롬프트) 설정
+                system_instruction = """
                 당신은 텍스트의 핵심 내용을 정확히 파악하여 카테고리와 핵심 키워드를 추출하는 전문가입니다.
                 반드시 다음 규칙을 엄격하게 준수하여 결과를 출력해야 합니다. 불필요한 서론이나 설명은 절대 제외하세요.
 
@@ -74,24 +79,6 @@ if st.button("🚀 분석 시작"):
                 - 키워드: 키워드1, 키워드2, 키워드3
                 """
 
-                # API 호출 (gpt-4o-mini 모델 활용으로 비용 효율화)
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"다음 텍스트를 규칙에 맞게 추출해줘:\n\n{user_input}"}
-                    ],
-                    temperature=0.1 # 일관된 규칙 준수를 위해 낮은 온도로 설정
-                )
-                
-                result_text = response.choices[0].message.content
-                
-                # 결과 화면 출력
-                st.success("🎯 분석 완료!")
-                st.subheader("📊 추출 결과")
-                
-                # 텍스트 박스 형태로 깔끔하게 렌더링
-                st.code(result_text, language="text")
-
-            except Exception as e:
-                st.error(f"❌ 오류가 발생했습니다: {e}")
+                # Gemini API 호출 (비용이 저렴하고 빠른 gemini-2.5-flash 모델 사용)
+                response = client.models.generate_content(
+                    model='gemini-2.5
