@@ -2,6 +2,7 @@ import streamlit as st
 from google import genai
 from google.genai import types
 import requests
+import time
 
 # 1. 페이지 및 스타일 설정 (넓은 화면 배치)
 st.set_page_config(page_title="단어 카테고리 & 인기 영상 추출기", layout="wide")
@@ -27,8 +28,8 @@ def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
         "part": "snippet",
         "q": query,
         "type": "video",
-        "order": "viewCount",  # 순수 조회수 높은 순서대로 수집
-        "maxResults": 50,      # 필터링 후 양쪽 25개를 맞추기 위해 넉넉히 수집
+        "order": "viewCount",
+        "maxResults": 50,
         "key": api_key
     }
         
@@ -41,7 +42,6 @@ def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
             
         video_ids = [item["id"]["videoId"] for item in items]
         
-        # 라이선스(status) 정보까지 한 번에 요청
         video_url = "https://www.googleapis.com/youtube/v3/videos"
         video_params = {
             "part": "snippet,statistics,contentDetails,status",
@@ -54,18 +54,15 @@ def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
             stats = item.get("statistics", {})
             view_count = int(stats.get("viewCount", 0))
             
-            # 기준: 조회수 10만 이상 필터링
             if view_count >= 100000:
                 title = item["snippet"]["title"]
                 video_id = item["id"]
                 url = f"https://www.youtube.com/watch?v={video_id}"
                 duration = item["contentDetails"]["duration"]
                 
-                # 영상 라이선스 확인 ('creativeCommon'인 경우 True)
                 license_type = item.get("status", {}).get("license", "youtube")
                 is_cc = (license_type == "creativeCommon")
                 
-                # 조회수 단위 가독성 처리
                 if view_count >= 100000000:
                     view_str = f"{view_count / 100000000:.1f}억회"
                 else:
@@ -75,10 +72,9 @@ def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
                     "title": title,
                     "view_count": view_str,
                     "url": url,
-                    "is_cc": is_cc  # CC 여부 저장
+                    "is_cc": is_cc
                 }
                 
-                # 롱폼 / 쇼츠 판정 (1분 미만 여부 체크)
                 if "M" not in duration and "H" not in duration:
                     if len(shorts_videos) < target_count:
                         shorts_videos.append(video_data)
@@ -111,10 +107,9 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
     elif user_input.strip() == "":
         st.warning("📝 분석할 단어를 입력해 주세요.")
     else:
-        # 화면 좌우 2분할 설정
         col_analysis, col_youtube = st.columns([1, 1.5])
         
-        # [왼쪽 열] Gemini 카테고리 + 키워드 + 해시태그 분석
+        # [왼쪽 열] Gemini 카테고리 + 키워드 + 해시태그 분석 (503 에러 방어 로직 추가)
         with col_analysis:
             with st.spinner("Gemini가 단어와 해시태그를 분석하는 중..."):
                 try:
@@ -142,17 +137,75 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                     - 해시태그: #해시태그1 #해시태그2 #해시태그3
                     """
 
-                    response = client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=f"다음 단어를 규칙에 맞게 추출해줘:\n\n{user_input}",
-                        config=types.GenerateContentConfig(
-                            system_instruction=system_instruction,
-                            temperature=0.1
-                        )
-                    )
-                    st.success("🎯 분석 완료!")
-                    st.code(response.text, language="text")
+                    # 💡 503 에러 대응을 위한 자동 재시도 루프 (최대 3번 시도)
+                    response = None
+                    for attempt in range(3):
+                        try:
+                            response = client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=f"다음 단어를 규칙에 맞게 추출해줘:\n\n{user_input}",
+                                config=types.GenerateContentConfig(
+                                    system_instruction=system_instruction,
+                                    temperature=0.1
+                                )
+                            )
+                            break  # 성공 시 루프 탈출
+                        except Exception as e:
+                            if "503" in str(e) and attempt < 2:
+                                time.sleep(2)  # 2초 쉬고 다시 시도
+                                continue
+                            else:
+                                raise e  # 3번 다 실패하거나 다른 에러면 바깥 catch로 던짐
+
+                    if response:
+                        st.success("🎯 분석 완료!")
+                        st.code(response.text, language="text")
+                
                 except Exception as e:
-                    st.error(f"Gemini 에러: {e}")
+                    # 💡 최종적으로 에러 화면을 친절하게 필터링하여 출력
+                    if "503" in str(e) or "UNAVAILABLE" in str(e):
+                        st.error("⏳ 구글 Gemini 서버의 순간 트래픽이 너무 높습니다. 잠시 후 [분석 및 인기 영상 추출 시작] 버튼을 다시 한번 눌러주세요!")
+                    else:
+                        st.error(f"Gemini 에러: {e}")
         
-        #
+        # [오른쪽 열] 유튜브 분석 결과 출력
+        with col_youtube:
+            if not youtube_api_key:
+                st.info("📢 유튜브 API Key를 등록하면 실시간 인기 영상 조회가 활성화됩니다.")
+            else:
+                with st.spinner("유튜브에서 인기 영상을 수집하고 라이선스를 판별하는 중..."):
+                    long_videos, shorts_videos = get_youtube_videos_with_cc_label(user_input, youtube_api_key, target_count=25)
+                    
+                    st.success(f"📺 수집 완료! (롱폼: {len(long_videos)}개 / 쇼츠: {len(shorts_videos)}개)")
+                    
+                    tab1, tab2 = st.tabs([f"🎥 롱폼 리스트 ({len(long_videos)}개)", f"📱 쇼츠 리스트 ({len(shorts_videos)}개)"])
+                    
+                    with tab1:
+                        if long_videos:
+                            for i, vid in enumerate(long_videos, 1):
+                                if vid["is_cc"]:
+                                    expander_title = f"{i}. {vid['title']} ({vid['view_count']}) [CC]"
+                                else:
+                                    expander_title = f"{i}. {vid['title']} ({vid['view_count']})"
+                                    
+                                with st.expander(expander_title):
+                                    if vid["is_cc"]:
+                                        st.success("ℹ️ **크리에이티브 커먼즈(CC-BY) 라이선스 영상입니다.** 출처 표기 시 재사용 및 수정 편집이 가능합니다.")
+                                    st.markdown(f"🔗 [유튜브에서 영상 보기]({vid['url']})")
+                        else:
+                            st.write("조건에 맞는 대형 롱폼 영상이 검색되지 않았습니다.")
+                            
+                    with tab2:
+                        if shorts_videos:
+                            for i, vid in enumerate(shorts_videos, 1):
+                                if vid["is_cc"]:
+                                    expander_title = f"{i}. {vid['title']} ({vid['view_count']}) [CC]"
+                                else:
+                                    expander_title = f"{i}. {vid['title']} ({vid['view_count']})"
+                                    
+                                with st.expander(expander_title):
+                                    if vid["is_cc"]:
+                                        st.success("ℹ️ **크리에이티브 커먼즈(CC-BY) 라이선스 영상입니다.** 출처 표기 시 재사용 및 수정 편집이 가능합니다.")
+                                    st.markdown(f"🔗 [유튜브에서 쇼츠 보기]({vid['url']})")
+                        else:
+                            st.write("조건에 맞는 대형 쇼츠 영상이 검색되지 않았습니다.")
