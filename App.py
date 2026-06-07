@@ -8,14 +8,14 @@ import time
 st.set_page_config(page_title="단어 카테고리 & 인기 영상 추출기", layout="wide")
 
 st.title("🎯 핵심 카테고리 및 유튜브 25개 영상 추출기")
-st.caption("단어를 분석하여 카테고리를 분류하고, 유튜브 인기 영상 25개 중 크리에이티브 커먼즈(CC) 라이선스 영상을 찾아 표시합니다.")
+st.caption("단어를 분석하여 카테고리를 분류하고, 유튜브 인기 영상 중 크리에이티브 커먼즈(CC) 라이선스 영상을 찾아 표시합니다.")
 st.divider()
 
 # 2. 내부 Secrets 시스템에서 API 키 자동 로드
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
 youtube_api_key = st.secrets.get("YOUTUBE_API_KEY", None)
 
-# 유튜브 API 호출 함수 (25개 수집 후 내부 CC 라이선스 판별)
+# 유튜브 API 호출 함수 (CC 검출 확률을 높이기 위해 검색 모풀을 50개로 유지)
 def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
     if not api_key:
         return None
@@ -28,8 +28,8 @@ def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
         "part": "snippet",
         "q": query,
         "type": "video",
-        "order": "viewCount",
-        "maxResults": 50,
+        "order": "viewCount",  # 순수 조회수 높은 순서대로 수집
+        "maxResults": 50,      # 상위 50개 풀을 조사하여 CC가 있는지 샅샅이 뒤집니다.
         "key": api_key
     }
         
@@ -42,6 +42,7 @@ def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
             
         video_ids = [item["id"]["videoId"] for item in items]
         
+        # 라이선스(status) 정보 정밀 요청
         video_url = "https://www.googleapis.com/youtube/v3/videos"
         video_params = {
             "part": "snippet,statistics,contentDetails,status",
@@ -54,15 +55,18 @@ def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
             stats = item.get("statistics", {})
             view_count = int(stats.get("viewCount", 0))
             
+            # 기준: 조회수 10만 이상 필터링
             if view_count >= 100000:
                 title = item["snippet"]["title"]
                 video_id = item["id"]
                 url = f"https://www.youtube.com/watch?v={video_id}"
                 duration = item["contentDetails"]["duration"]
                 
+                # 영상 라이선스 확인 (대소문자 구분 없이 정확하게 매칭)
                 license_type = item.get("status", {}).get("license", "youtube")
-                is_cc = (license_type == "creativeCommon")
+                is_cc = (license_type.lower() == "creativecommon")
                 
+                # 조회수 단위 가독성 처리
                 if view_count >= 100000000:
                     view_str = f"{view_count / 100000000:.1f}억회"
                 else:
@@ -75,6 +79,7 @@ def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
                     "is_cc": is_cc
                 }
                 
+                # 롱폼 / 쇼츠 판정 (1분 미만 여부 체크)
                 if "M" not in duration and "H" not in duration:
                     if len(shorts_videos) < target_count:
                         shorts_videos.append(video_data)
@@ -109,7 +114,7 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
     else:
         col_analysis, col_youtube = st.columns([1, 1.5])
         
-        # [왼쪽 열] Gemini 카테고리 + 키워드 + 해시태그 분석 (503 에러 방어 로직 추가)
+        # [왼쪽 열] Gemini 카테고리 + 키워드 + 해시태그 분석
         with col_analysis:
             with st.spinner("Gemini가 단어와 해시태그를 분석하는 중..."):
                 try:
@@ -137,7 +142,6 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                     - 해시태그: #해시태그1 #해시태그2 #해시태그3
                     """
 
-                    # 💡 503 에러 대응을 위한 자동 재시도 루프 (최대 3번 시도)
                     response = None
                     for attempt in range(3):
                         try:
@@ -149,22 +153,21 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                                     temperature=0.1
                                 )
                             )
-                            break  # 성공 시 루프 탈출
+                            break
                         except Exception as e:
                             if "503" in str(e) and attempt < 2:
-                                time.sleep(2)  # 2초 쉬고 다시 시도
+                                time.sleep(2)
                                 continue
                             else:
-                                raise e  # 3번 다 실패하거나 다른 에러면 바깥 catch로 던짐
+                                raise e
 
                     if response:
                         st.success("🎯 분석 완료!")
                         st.code(response.text, language="text")
                 
                 except Exception as e:
-                    # 💡 최종적으로 에러 화면을 친절하게 필터링하여 출력
                     if "503" in str(e) or "UNAVAILABLE" in str(e):
-                        st.error("⏳ 구글 Gemini 서버의 순간 트래픽이 너무 높습니다. 잠시 후 [분석 및 인기 영상 추출 시작] 버튼을 다시 한번 눌러주세요!")
+                        st.error("⏳ 구글 Gemini 서버의 순간 트래픽이 너무 높습니다. 잠시 후 버튼을 다시 눌러주세요!")
                     else:
                         st.error(f"Gemini 에러: {e}")
         
@@ -180,7 +183,16 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                     
                     tab1, tab2 = st.tabs([f"🎥 롱폼 리스트 ({len(long_videos)}개)", f"📱 쇼츠 리스트 ({len(shorts_videos)}개)"])
                     
+                    # CC 유무를 시각적으로 카운트하기 위한 변수
+                    cc_long_count = sum(1 for v in long_videos if v["is_cc"])
+                    cc_shorts_count = sum(1 for v in shorts_videos if v["is_cc"])
+                    
                     with tab1:
+                        if cc_long_count > 0:
+                            st.info(f"💡 현재 리스트에 {cc_long_count}개의 [CC] 영상이 포함되어 있습니다.")
+                        else:
+                            st.caption("ℹ️ 조회수가 높은 상위 영상 중 CC 라이선스 영상이 없습니다. (모두 표준 유튜브 라이선스)")
+                            
                         if long_videos:
                             for i, vid in enumerate(long_videos, 1):
                                 if vid["is_cc"]:
@@ -196,6 +208,11 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                             st.write("조건에 맞는 대형 롱폼 영상이 검색되지 않았습니다.")
                             
                     with tab2:
+                        if cc_shorts_count > 0:
+                            st.info(f"💡 현재 리스트에 {cc_shorts_count}개의 [CC] 영상이 포함되어 있습니다.")
+                        else:
+                            st.caption("ℹ️ 조회수가 높은 상위 영상 중 CC 라이선스 영상이 없습니다. (모두 표준 유튜브 라이선스)")
+                            
                         if shorts_videos:
                             for i, vid in enumerate(shorts_videos, 1):
                                 if vid["is_cc"]:
