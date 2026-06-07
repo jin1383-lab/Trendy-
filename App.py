@@ -6,16 +6,16 @@ import requests
 # 1. 페이지 및 스타일 설정 (넓은 화면 배치)
 st.set_page_config(page_title="단어 카테고리 & 인기 영상 추출기", layout="wide")
 
-st.title("🎯 핵심 카테고리, 해시태그 및 유튜브 영상 추출기")
-st.caption("단어를 분석하여 카테고리·키워드·해시태그를 추출하고, 유튜브에서 조회수 10만 이상의 인기 영상을 함께 제공합니다.")
+st.title("🎯 핵심 카테고리 및 유튜브 25개 영상 추출기")
+st.caption("단어를 분석하여 카테고리를 분류하고, 유튜브 인기 영상 25개 중 크리에이티브 커먼즈(CC) 라이선스 영상을 찾아 표시합니다.")
 st.divider()
 
 # 2. 내부 Secrets 시스템에서 API 키 자동 로드
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
 youtube_api_key = st.secrets.get("YOUTUBE_API_KEY", None)
 
-# 유튜브 API 호출 함수 (상위 25개 고속 수집)
-def get_youtube_videos_25(query, api_key, target_count=25):
+# 유튜브 API 호출 함수 (25개 수집 후 내부 CC 라이선스 판별)
+def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
     if not api_key:
         return None
     
@@ -27,8 +27,8 @@ def get_youtube_videos_25(query, api_key, target_count=25):
         "part": "snippet",
         "q": query,
         "type": "video",
-        "order": "viewCount",
-        "maxResults": 50, 
+        "order": "viewCount",  # 순수 조회수 높은 순서대로 수집
+        "maxResults": 50,      # 필터링 후 양쪽 25개를 맞추기 위해 넉넉히 수집
         "key": api_key
     }
         
@@ -41,10 +41,10 @@ def get_youtube_videos_25(query, api_key, target_count=25):
             
         video_ids = [item["id"]["videoId"] for item in items]
         
-        # 상세 정보(조회수, 재생시간) 가져오기
+        # 라이선스(status) 정보까지 한 번에 요청
         video_url = "https://www.googleapis.com/youtube/v3/videos"
         video_params = {
-            "part": "snippet,statistics,contentDetails",
+            "part": "snippet,statistics,contentDetails,status",
             "id": ",".join(video_ids),
             "key": api_key
         }
@@ -61,6 +61,10 @@ def get_youtube_videos_25(query, api_key, target_count=25):
                 url = f"https://www.youtube.com/watch?v={video_id}"
                 duration = item["contentDetails"]["duration"]
                 
+                # 영상 라이선스 확인 ('creativeCommon'인 경우 True)
+                license_type = item.get("status", {}).get("license", "youtube")
+                is_cc = (license_type == "creativeCommon")
+                
                 # 조회수 단위 가독성 처리
                 if view_count >= 100000000:
                     view_str = f"{view_count / 100000000:.1f}억회"
@@ -70,7 +74,8 @@ def get_youtube_videos_25(query, api_key, target_count=25):
                 video_data = {
                     "title": title,
                     "view_count": view_str,
-                    "url": url
+                    "url": url,
+                    "is_cc": is_cc  # CC 여부 저장
                 }
                 
                 # 롱폼 / 쇼츠 판정 (1분 미만 여부 체크)
@@ -115,7 +120,6 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                 try:
                     client = genai.Client(api_key=gemini_api_key)
                     
-                    # 프롬프트에 해시태그 추출 규칙 추가
                     system_instruction = """
                     당신은 입력된 단어의 핵심 내용을 정확히 파악하여 카테고리, 핵심 키워드, SNS용 연관 해시태그를 추출하는 전문가입니다.
                     반드시 다음 규칙을 엄격하게 준수하여 결과를 출력해야 합니다. 불필요한 서론이나 설명은 절대 제외하세요.
@@ -127,7 +131,7 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                     1. 대분류는 우선순위 리스트 중 1개만 선택.
                     2. 소분류는 세부 주제 카테고리 2~3개 제시.
                     3. 키워드는 중요도 순으로 나열하며 최대 10개 추출.
-                    4. 해시태그는 Instagram, YouTube Shorts 등에서 사용하기 좋은 트렌디한 연관 키워드를 단어 앞에 '#'를 붙여 최대 10개까지 추출한다. (예: #테크 #AI)
+                    4. 해시태그는 Instagram, YouTube Shorts 등에서 사용하기 좋은 트렌디한 연관 키워드를 단어 앞에 '#'를 붙여 최대 10개까지 추출한다.
                     5. 중복 표현 제거 및 불필요한 설명 금지.
                     6. 응답은 반드시 아래 형식을 정확히 따른다.
 
@@ -151,31 +155,4 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                 except Exception as e:
                     st.error(f"Gemini 에러: {e}")
         
-        # [오른쪽 열] 유튜브 대량 분석 결과 출력
-        with col_youtube:
-            if not youtube_api_key:
-                st.info("📢 유튜브 API Key를 등록하면 실시간 인기 영상 조회가 활성화됩니다.")
-            else:
-                with st.spinner("유튜브에서 인기 영상을 수집하는 중..."):
-                    long_videos, shorts_videos = get_youtube_videos_25(user_input, youtube_api_key, target_count=25)
-                    
-                    st.success(f"📺 수집 완료! (롱폼: {len(long_videos)}개 / 쇼츠: {len(shorts_videos)}개)")
-                    
-                    # 탭 분할
-                    tab1, tab2 = st.tabs([f"🎥 롱폼 리스트 ({len(long_videos)}개)", f"📱 쇼츠 리스트 ({len(shorts_videos)}개)"])
-                    
-                    with tab1:
-                        if long_videos:
-                            for i, vid in enumerate(long_videos, 1):
-                                with st.expander(f"{i}. {vid['title']} ({vid['view_count']})"):
-                                    st.markdown(f"🔗 [유튜브에서 영상 보기]({vid['url']})")
-                        else:
-                            st.write("조건에 맞는 대형 롱폼 영상이 검색되지 않았습니다.")
-                            
-                    with tab2:
-                        if shorts_videos:
-                            for i, vid in enumerate(shorts_videos, 1):
-                                with st.expander(f"{i}. {vid['title']} ({vid['view_count']})"):
-                                    st.markdown(f"🔗 [유튜브에서 쇼츠 보기]({vid['url']})")
-                        else:
-                            st.write("조건에 맞는 대형 쇼츠 영상이 검색되지 않았습니다.")
+        #
