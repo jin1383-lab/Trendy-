@@ -8,15 +8,29 @@ import time
 st.set_page_config(page_title="단어 카테고리 & 인기 영상 추출기", layout="wide")
 
 st.title("🎯 핵심 카테고리 및 유튜브 25개 영상 추출기")
-st.caption("단어를 분석하여 카테고리를 분류하고, 유튜브 인기 영상 중 크리에이티브 커먼즈(CC) 라이선스 영상을 찾아 표시합니다.")
+st.caption("단어를 분석하여 카테고리를 분류하고, 선택한 국가 기준에 맞는 유튜브 인기 영상 중 CC 라이선스 영상을 찾아 표시합니다.")
 st.divider()
 
-# 2. 내부 Secrets 시스템에서 API 키 자동 로드
+# 2. 사이드바 - 특정 국가 필터 설정 추가
+st.sidebar.header("🌐 검색 국가 설정")
+country_option = st.sidebar.selectbox(
+    "어느 국가의 시청 기준을 적용할까요?",
+    ["전 세계 (제한 없음)", "대한민국 (KR 기준)", "미국 (US 기준)"]
+)
+
+# 선택한 옵션에 따른 regionCode 매핑
+region_code = None
+if country_option == "대한민국 (KR 기준)":
+    region_code = "KR"
+elif country_option == "미국 (US 기준)":
+    region_code = "US"
+
+# 내부 Secrets 시스템에서 API 키 자동 로드
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
 youtube_api_key = st.secrets.get("YOUTUBE_API_KEY", None)
 
-# 유튜브 API 호출 함수 (CC 검출 확률을 높이기 위해 검색 모풀을 50개로 유지)
-def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
+# 유튜브 API 호출 함수 (regionCode 매개변수 추가)
+def get_youtube_videos_with_cc_label(query, api_key, target_count=25, region_code=None):
     if not api_key:
         return None
     
@@ -29,9 +43,13 @@ def get_youtube_videos_with_cc_label(query, api_key, target_count=25):
         "q": query,
         "type": "video",
         "order": "viewCount",  # 순수 조회수 높은 순서대로 수집
-        "maxResults": 50,      # 상위 50개 풀을 조사하여 CC가 있는지 샅샅이 뒤집니다.
+        "maxResults": 50,      # 상위 50개 풀을 조사
         "key": api_key
     }
+    
+    # 💡 특정 국가 시청 기준(regionCode)이 설정되어 있다면 API 요청에 추가
+    if region_code:
+        search_params["regionCode"] = region_code
         
     try:
         search_response = requests.get(search_url, params=search_params).json()
@@ -176,14 +194,16 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
             if not youtube_api_key:
                 st.info("📢 유튜브 API Key를 등록하면 실시간 인기 영상 조회가 활성화됩니다.")
             else:
-                with st.spinner("유튜브에서 인기 영상을 수집하고 라이선스를 판별하는 중..."):
-                    long_videos, shorts_videos = get_youtube_videos_with_cc_label(user_input, youtube_api_key, target_count=25)
+                # 💡 어떤 국가 기준으로 필터링 중인지 UI에 안내 표시
+                with st.spinner(f"유튜브({country_option})에서 인기 영상을 수집하는 중..."):
+                    long_videos, shorts_videos = get_youtube_videos_with_cc_label(
+                        user_input, youtube_api_key, target_count=25, region_code=region_code
+                    )
                     
                     st.success(f"📺 수집 완료! (롱폼: {len(long_videos)}개 / 쇼츠: {len(shorts_videos)}개)")
                     
                     tab1, tab2 = st.tabs([f"🎥 롱폼 리스트 ({len(long_videos)}개)", f"📱 쇼츠 리스트 ({len(shorts_videos)}개)"])
                     
-                    # CC 유무를 시각적으로 카운트하기 위한 변수
                     cc_long_count = sum(1 for v in long_videos if v["is_cc"])
                     cc_shorts_count = sum(1 for v in shorts_videos if v["is_cc"])
                     
@@ -191,7 +211,7 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                         if cc_long_count > 0:
                             st.info(f"💡 현재 리스트에 {cc_long_count}개의 [CC] 영상이 포함되어 있습니다.")
                         else:
-                            st.caption("ℹ️ 조회수가 높은 상위 영상 중 CC 라이선스 영상이 없습니다. (모두 표준 유튜브 라이선스)")
+                            st.caption("ℹ️ 조회수가 높은 상위 영상 중 CC 라이선스 영상이 없습니다.")
                             
                         if long_videos:
                             for i, vid in enumerate(long_videos, 1):
@@ -211,7 +231,7 @@ if st.button("🚀 분석 및 인기 영상 추출 시작"):
                         if cc_shorts_count > 0:
                             st.info(f"💡 현재 리스트에 {cc_shorts_count}개의 [CC] 영상이 포함되어 있습니다.")
                         else:
-                            st.caption("ℹ️ 조회수가 높은 상위 영상 중 CC 라이선스 영상이 없습니다. (모두 표준 유튜브 라이선스)")
+                            st.caption("ℹ️ 조회수가 높은 상위 영상 중 CC 라이선스 영상이 없습니다.")
                             
                         if shorts_videos:
                             for i, vid in enumerate(shorts_videos, 1):
